@@ -40,7 +40,11 @@ install_base() {
 }
 
 setup_service() {
-    echo -e "${YELLOW}正在配置 Systemd 服务...${PLAIN}"
+    echo -e "${YELLOW}正在配置 Systemd 服务以实现后台运行和开机自启...${PLAIN}"
+    
+    # 停止可能存在的旧服务
+    systemctl stop fenliu >/dev/null 2>&1
+    
     cat > /etc/systemd/system/fenliu.service <<EOF
 [Unit]
 Description=Nginx SNI Forwarding Manager
@@ -50,7 +54,7 @@ After=network.target nginx.service
 Type=simple
 User=root
 WorkingDirectory=$(pwd)
-ExecStart=/usr/bin/python3 app.py
+ExecStart=$(which python3) app.py
 Restart=on-failure
 
 [Install]
@@ -60,7 +64,12 @@ EOF
     systemctl daemon-reload
     systemctl enable fenliu
     systemctl start fenliu
-    echo -e "${GREEN}服务已启动并设置为开机自启${PLAIN}"
+    
+    if systemctl is-active --quiet fenliu; then
+        echo -e "${GREEN}服务已成功启动并设置为开机自启 (后台运行中)${PLAIN}"
+    else
+        echo -e "${RED}服务启动失败，请运行 'journalctl -u fenliu -f' 查看日志${PLAIN}"
+    fi
 }
 
 setup_nginx() {
