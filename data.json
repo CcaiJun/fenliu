@@ -1,0 +1,23 @@
+{
+  "listen_port": 443,
+  "routes": [
+    {
+      "id": "4ca3d569",
+      "domain": "hkxui.funa.cc",
+      "backend_name": "sui",
+      "backend_server": "127.0.0.1:4433"
+    },
+    {
+      "id": "49fc406f",
+      "domain": "jizhang.funa.cc",
+      "backend_name": "jizhang_backend",
+      "backend_server": "127.0.0.1:10003"
+    },
+    {
+      "id": "646de283",
+      "domain": "nezha.funa.cc",
+      "backend_name": "nezha_backend",
+      "backend_server": "127.0.0.1:15846"
+    }
+  ]
+}
