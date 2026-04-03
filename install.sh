@@ -75,24 +75,39 @@ EOF
 setup_nginx() {
     echo -e "${YELLOW}正在配置 Nginx 集成...${PLAIN}"
     
-    # 自动识别 Nginx 配置路径 (针对宝塔或标准安装)
+    # 自动识别 Nginx 配置路径
     NGINX_CONF=""
+    STREAM_CONF=""
+    
+    # 优先检查常见路径
     if [[ -f "/www/server/nginx/conf/nginx.conf" ]]; then
         NGINX_CONF="/www/server/nginx/conf/nginx.conf"
-        STREAM_CONF="/www/server/nginx/conf/stream-sni.conf"
     elif [[ -f "/etc/nginx/nginx.conf" ]]; then
         NGINX_CONF="/etc/nginx/nginx.conf"
-        STREAM_CONF="/etc/nginx/stream-sni.conf"
+    elif [[ -f "/usr/local/nginx/conf/nginx.conf" ]]; then
+        NGINX_CONF="/usr/local/nginx/conf/nginx.conf"
+    else
+        # 尝试通过 nginx -V 查找
+        NGINX_CONF=$(nginx -V 2>&1 | grep -oP "conf-path=\K[^ ]*")
+        if [[ ! -f "$NGINX_CONF" ]]; then
+            # 最后的尝试：find
+            NGINX_CONF=$(find /etc /usr/local /www -name "nginx.conf" 2>/dev/null | head -n 1)
+        fi
     fi
 
     if [[ -n "$NGINX_CONF" ]]; then
+        # 规则文件放在 nginx.conf 同级目录
+        CONF_DIR=$(dirname "$NGINX_CONF")
+        STREAM_CONF="$CONF_DIR/stream-sni.conf"
+        
         # 检查是否已经 include
         if ! grep -q "stream-sni.conf" "$NGINX_CONF"; then
             # 尝试插入到 stream 块中
             if grep -q "stream {" "$NGINX_CONF"; then
                 sed -i '/stream {/a \    include '"$STREAM_CONF"';' "$NGINX_CONF"
             else
-                echo -e "stream {\n    include $STREAM_CONF;\n}" >> "$NGINX_CONF"
+                # 如果没有 stream 块，添加到文件末尾
+                echo -e "\nstream {\n    include $STREAM_CONF;\n}" >> "$NGINX_CONF"
             fi
             echo -e "${GREEN}Nginx 配置已自动关联：$NGINX_CONF${PLAIN}"
         else
@@ -139,7 +154,20 @@ setup_nginx
 setup_service
 
 echo -e "\n${GREEN}安装完成！${PLAIN}"
-echo -e "管理面板地址：${YELLOW}http://$(curl -s ifconfig.me):5000${PLAIN}"
+
+# 获取 IP 地址 (优先 IPv4)
+SERVER_IP=$(curl -s4 ifconfig.me || curl -s ifconfig.me)
+if [[ "$SERVER_IP" == *":"* ]]; then
+    # 如果是 IPv6，添加中括号
+    DISPLAY_IP="[$SERVER_IP]"
+else
+    DISPLAY_IP="$SERVER_IP"
+fi
+
+echo -e "管理面板地址：${YELLOW}http://$DISPLAY_IP:5000${PLAIN}"
 echo -e "配置文件目录：${YELLOW}$(pwd)${PLAIN}"
-echo -e "Nginx 规则文件：${YELLOW}${STREAM_CONF}${PLAIN}"
-echo -e "\n请确保防火墙已放行 5000 端口以及你配置的所有后端端口。"
+echo -e "Nginx 规则文件：${YELLOW}${STREAM_CONF:-"未自动关联，请手动配置"}${PLAIN}"
+echo -e "\n${YELLOW}提示：${PLAIN}"
+echo -e "1. 如果看到 'pip root user' 警告，属于正常现象，依赖已正确安装。"
+echo -e "2. 请确保防火墙已放行 5000 端口。"
+echo -e "3. Nginx 配置文件中必须包含 stream 模块支持 (已自动尝试配置)。"
