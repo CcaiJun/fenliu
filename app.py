@@ -88,8 +88,8 @@ def get_data():
 @app.route('/api/routes', methods=['POST'])
 def add_route():
     req = request.json
-    domain = req.get('domain')
-    backend_server = req.get('backend_server')
+    domain = req.get('domain', '').strip()
+    backend_server = str(req.get('backend_server', '')).replace(' ', '')
     auto_patch = req.get('auto_patch', False)
     
     if not domain or not backend_server:
@@ -140,8 +140,8 @@ def add_route():
 @app.route('/api/routes/<route_id>', methods=['PUT'])
 def update_route(route_id):
     req = request.json
-    domain = req.get('domain')
-    backend_server = req.get('backend_server')
+    domain = req.get('domain', '').strip()
+    backend_server = str(req.get('backend_server', '')).replace(' ', '')
     auto_patch = req.get('auto_patch', False)
     
     if not domain or not backend_server:

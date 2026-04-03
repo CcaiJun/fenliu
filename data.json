@@ -2,22 +2,17 @@
   "listen_port": 443,
   "routes": [
     {
-      "id": "4ca3d569",
-      "domain": "hkxui.funa.cc",
+      "id": "509c99e2",
+      "domain": "www.apple.com",
       "backend_name": "sui",
-      "backend_server": "127.0.0.1:4433"
+      "backend_server": "127.0.0.1:44322"
     },
     {
-      "id": "49fc406f",
-      "domain": "jizhang.funa.cc",
-      "backend_name": "jizhang_backend",
-      "backend_server": "127.0.0.1:10003"
-    },
-    {
-      "id": "646de283",
-      "domain": "nezha.funa.cc",
-      "backend_name": "nezha_backend",
-      "backend_server": "127.0.0.1:15846"
+      "id": "d81bfbe1",
+      "domain": "2am100.funa.cc",
+      "backend_name": "sui2",
+      "backend_server": "127.0.0.1:54726"
     }
-  ]
+  ],
+  "udp_backend_id": "509c99e2"
 }
