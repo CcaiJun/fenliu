@@ -149,14 +149,14 @@ echo -e "${GREEN}开始安装 Nginx SNI 分流管理面板...${PLAIN}"
 
 # 1. 确认前置环境
 echo -e "${YELLOW}重要提示：本应用需要配合 宝塔面板 (BT-Panel) 和 Nginx 使用。${PLAIN}"
-read -p "您是否已在服务器上安装了宝塔面板和 Nginx？(y/n): " confirm
+read -p "您是否已在服务器上安装了宝塔面板和 Nginx？(y/n): " confirm < /dev/tty
 if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
     echo -e "${RED}安装已取消。请先安装宝塔面板和 Nginx 后再试。${PLAIN}"
     exit 1
 fi
 
 # 2. 选择安装端口
-read -p "请输入管理面板运行端口 (默认 5000): " PANEL_PORT
+read -p "请输入管理面板运行端口 (默认 5000): " PANEL_PORT < /dev/tty
 PANEL_PORT=${PANEL_PORT:-5000}
 
 # 检查是否需要克隆源码
