@@ -229,5 +229,7 @@ def apply_config():
 
 if __name__ == '__main__':
     # 启动时先生成一次配置
-    generate_nginx_config(load_data())
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    data = load_data()
+    generate_nginx_config(data)
+    panel_port = data.get('panel_port', 5000)
+    app.run(host='0.0.0.0', port=panel_port, debug=True)

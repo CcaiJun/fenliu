@@ -39,6 +39,32 @@ install_base() {
     fi
 }
 
+setup_firewall() {
+    echo -e "${YELLOW}正在尝试自动开放防火墙端口 $PANEL_PORT...${PLAIN}"
+    if command -v ufw >/dev/null 2>&1; then
+        ufw allow $PANEL_PORT/tcp >/dev/null 2>&1
+        echo -e "${GREEN}UFW 端口 $PANEL_PORT 已放行${PLAIN}"
+    elif command -v firewall-cmd >/dev/null 2>&1; then
+        firewall-cmd --zone=public --add-port=$PANEL_PORT/tcp --permanent >/dev/null 2>&1
+        firewall-cmd --reload >/dev/null 2>&1
+        echo -e "${GREEN}Firewalld 端口 $PANEL_PORT 已放行${PLAIN}"
+    else
+        echo -e "${YELLOW}未检测到 UFW 或 Firewalld，请手动放行端口 $PANEL_PORT${PLAIN}"
+    fi
+}
+
+setup_data_json() {
+    DATA_FILE="data.json"
+    if [[ ! -f "$DATA_FILE" ]]; then
+        echo '{"listen_port": 443, "routes": []}' > "$DATA_FILE"
+    fi
+    # 使用 python3 修改 data.json 中的面板端口字段 panel_port
+    python3 -c "import json, os; \
+        data = json.load(open('$DATA_FILE')); \
+        data['panel_port'] = $PANEL_PORT; \
+        json.dump(data, open('$DATA_FILE', 'w'), indent=2)" 2>/dev/null
+}
+
 setup_service() {
     echo -e "${YELLOW}正在配置 Systemd 服务以实现后台运行和开机自启...${PLAIN}"
     
@@ -121,6 +147,18 @@ setup_nginx() {
 
 echo -e "${GREEN}开始安装 Nginx SNI 分流管理面板...${PLAIN}"
 
+# 1. 确认前置环境
+echo -e "${YELLOW}重要提示：本应用需要配合 宝塔面板 (BT-Panel) 和 Nginx 使用。${PLAIN}"
+read -p "您是否已在服务器上安装了宝塔面板和 Nginx？(y/n): " confirm
+if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+    echo -e "${RED}安装已取消。请先安装宝塔面板和 Nginx 后再试。${PLAIN}"
+    exit 1
+fi
+
+# 2. 选择安装端口
+read -p "请输入管理面板运行端口 (默认 5000): " PANEL_PORT
+PANEL_PORT=${PANEL_PORT:-5000}
+
 # 检查是否需要克隆源码
 INSTALL_DIR="/root/fenliu"
 if [ ! -f "app.py" ]; then
@@ -151,7 +189,9 @@ if [[ -f "requirements.txt" ]]; then
 fi
 
 setup_nginx
+setup_data_json
 setup_service
+setup_firewall
 
 echo -e "\n${GREEN}安装完成！${PLAIN}"
 
@@ -164,10 +204,10 @@ else
     DISPLAY_IP="$SERVER_IP"
 fi
 
-echo -e "管理面板地址：${YELLOW}http://$DISPLAY_IP:5000${PLAIN}"
+echo -e "管理面板地址：${YELLOW}http://$DISPLAY_IP:$PANEL_PORT${PLAIN}"
 echo -e "配置文件目录：${YELLOW}$(pwd)${PLAIN}"
 echo -e "Nginx 规则文件：${YELLOW}${STREAM_CONF:-"未自动关联，请手动配置"}${PLAIN}"
 echo -e "\n${YELLOW}提示：${PLAIN}"
 echo -e "1. 如果看到 'pip root user' 警告，属于正常现象，依赖已正确安装。"
-echo -e "2. 请确保防火墙已放行 5000 端口。"
+echo -e "2. 请确保防火墙已放行 $PANEL_PORT 端口（脚本已尝试自动开放）。"
 echo -e "3. Nginx 配置文件中必须包含 stream 模块支持 (已自动尝试配置)。"
