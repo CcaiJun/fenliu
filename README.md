@@ -11,8 +11,21 @@
 
 ## 一键安装
 
-在服务器上运行以下命令进行安装：
+在服务器上运行以下任一指令即可完成安装：
 
+**方式 1 (推荐)**：
+```bash
+wget -qO- https://raw.githubusercontent.com/CcaiJun/fenliu/master/install.sh | bash
+```
+
+**方式 2 (备选)**：
+```bash
+curl -sSL https://raw.githubusercontent.com/CcaiJun/fenliu/master/install.sh | bash
+```
+
+## 传统安装方式 (手动)
+
+如果您希望手动安装，可以运行以下命令：
 ```bash
 cd /root
 git clone https://github.com/CcaiJun/fenliu.git

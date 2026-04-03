@@ -106,6 +106,28 @@ setup_nginx() {
 
 echo -e "${GREEN}开始安装 Nginx SNI 分流管理面板...${PLAIN}"
 
+# 检查是否需要克隆源码
+INSTALL_DIR="/root/fenliu"
+if [ ! -f "app.py" ]; then
+    echo -e "${YELLOW}正在初始化安装环境...${PLAIN}"
+    
+    # 确保基础工具已安装
+    if [[ x"${release}" == x"centos" ]]; then
+        yum install -y git curl wget
+    else
+        apt-get update && apt-get install -y git curl wget
+    fi
+    
+    if [ -d "$INSTALL_DIR" ]; then
+        echo -e "${YELLOW}检测到已有目录，正在同步代码...${PLAIN}"
+        cd "$INSTALL_DIR" && git pull
+    else
+        echo -e "${YELLOW}正在克隆源码到 ${INSTALL_DIR}...${PLAIN}"
+        git clone https://github.com/CcaiJun/fenliu.git "$INSTALL_DIR"
+        cd "$INSTALL_DIR"
+    fi
+fi
+
 install_base
 
 # 安装依赖
