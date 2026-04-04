@@ -89,6 +89,7 @@
 
             <!-- 右侧面板：规则列表 -->
             <div class="md:col-span-2 space-y-6">
+                {% raw %}
                 <!-- 宝塔站点自动检测 -->
                 <div class="bg-white p-6 rounded shadow">
                     <h2 class="text-xl font-bold text-gray-800 mb-4 border-b pb-2 flex justify-between items-center">
@@ -119,7 +120,6 @@
                 </div>
 
                 <div class="bg-white p-6 rounded shadow">
-                    {% raw %}
                     <h2 class="text-xl font-bold text-gray-800 mb-4 border-b pb-2 flex justify-between items-center">
                         <span>当前分流规则</span>
                         <span class="text-sm font-normal text-gray-500 bg-gray-100 py-1 px-2 rounded">共 {{ routes.length }} 条</span>
