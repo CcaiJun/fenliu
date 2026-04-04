@@ -40,6 +40,35 @@ def patch_bt_site_config(domain, target_port):
     except Exception as e:
         return False, f"修改配置文件时出错: {str(e)}"
 
+@app.route('/api/bt_sites', methods=['GET'])
+def get_bt_sites():
+    """扫描宝塔站点的 Nginx 配置文件，提取域名和端口"""
+    sites = []
+    if not os.path.exists(BT_VHOST_DIR):
+        return jsonify(sites)
+    
+    for filename in os.listdir(BT_VHOST_DIR):
+        if filename.endswith(".conf"):
+            domain = filename[:-5]
+            conf_path = os.path.join(BT_VHOST_DIR, filename)
+            try:
+                with open(conf_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                
+                # 提取监听端口
+                listen_ports = re.findall(r'listen\s+(\d+)\s*(?:ssl|;)', content)
+                # 排除 80 端口，重点看 443 或已修改过的端口
+                ports = [p for p in listen_ports if p != '80']
+                
+                if ports:
+                    sites.append({
+                        "domain": domain,
+                        "ports": list(set(ports))
+                    })
+            except Exception:
+                continue
+    return jsonify(sites)
+
 @app.route('/')
 def index():
     return render_template('index.html')

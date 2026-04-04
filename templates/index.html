@@ -88,12 +88,42 @@
             </div>
 
             <!-- 右侧面板：规则列表 -->
-            <div class="md:col-span-2 bg-white p-6 rounded shadow">
-                {% raw %}
-                <h2 class="text-xl font-bold text-gray-800 mb-4 border-b pb-2 flex justify-between items-center">
-                    <span>当前分流规则</span>
-                    <span class="text-sm font-normal text-gray-500 bg-gray-100 py-1 px-2 rounded">共 {{ routes.length }} 条</span>
-                </h2>
+            <div class="md:col-span-2 space-y-6">
+                <!-- 宝塔站点自动检测 -->
+                <div class="bg-white p-6 rounded shadow">
+                    <h2 class="text-xl font-bold text-gray-800 mb-4 border-b pb-2 flex justify-between items-center">
+                        <span>检测到宝塔站点</span>
+                        <button @click="fetchBtSites" class="text-blue-500 hover:text-blue-700 text-xs font-normal bg-blue-50 py-1 px-2 rounded">
+                            刷新检测
+                        </button>
+                    </h2>
+                    
+                    <div v-if="btSites.length === 0" class="text-center py-4 text-gray-500 text-sm">
+                        未检测到宝塔站点或 Nginx 配置。
+                    </div>
+                    
+                    <div v-else class="grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
+                        <div v-for="site in btSites" :key="site.domain" class="border rounded p-3 hover:bg-gray-50 flex justify-between items-center">
+                            <div>
+                                <div class="text-sm font-bold text-gray-800">{{ site.domain }}</div>
+                                <div class="text-xs text-gray-500 mt-1">
+                                    端口: <span v-for="p in site.ports" :key="p" class="bg-gray-200 px-1 rounded mr-1">{{ p }}</span>
+                                </div>
+                            </div>
+                            <button @click="autoAddBtSite(site)" class="bg-blue-100 text-blue-700 hover:bg-blue-200 text-xs font-bold py-1 px-3 rounded shadow-sm">
+                                一键分流
+                            </button>
+                        </div>
+                    </div>
+                    <p class="text-xs text-gray-400 mt-4 italic">提示：一键分流将自动使用域名作为 SNI，并尝试使用检测到的第一个非 80 端口作为后端。</p>
+                </div>
+
+                <div class="bg-white p-6 rounded shadow">
+                    {% raw %}
+                    <h2 class="text-xl font-bold text-gray-800 mb-4 border-b pb-2 flex justify-between items-center">
+                        <span>当前分流规则</span>
+                        <span class="text-sm font-normal text-gray-500 bg-gray-100 py-1 px-2 rounded">共 {{ routes.length }} 条</span>
+                    </h2>
                 
                 <div v-if="routes.length === 0" class="text-center py-8 text-gray-500">
                     暂无分流规则，请在左侧添加。
@@ -208,6 +238,7 @@
         createApp({
             setup() {
                 const routes = ref([]);
+                const btSites = ref([]);
                 const settings = ref({ listen_port: 443 });
                 const newRoute = ref({ domain: '', backend_server: '', backend_name: '', auto_patch: true });
                 const editingRoute = ref(null);
@@ -229,6 +260,45 @@
                         settings.value.listen_port = data.listen_port || 443;
                     } catch (error) {
                         showMessage('获取数据失败: ' + error.message, 'error');
+                    }
+                };
+
+                const fetchBtSites = async () => {
+                    try {
+                        const res = await fetch('/api/bt_sites');
+                        if (res.ok) {
+                            btSites.value = await res.json();
+                        }
+                    } catch (error) {
+                        console.error('获取宝塔站点失败:', error);
+                    }
+                };
+
+                const autoAddBtSite = async (site) => {
+                    const port = site.ports[0] || '443';
+                    const routeData = {
+                        domain: site.domain,
+                        backend_server: port,
+                        backend_name: site.domain.replace(/\./g, '_') + '_bt',
+                        auto_patch: true
+                    };
+                    
+                    try {
+                        const res = await fetch('/api/routes', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(routeData)
+                        });
+                        const data = await res.json();
+                        
+                        if (res.ok) {
+                            showMessage(`已为 ${site.domain} 自动添加分流规则`);
+                            fetchData();
+                        } else {
+                            showMessage(data.error || '添加失败', 'error');
+                        }
+                    } catch (error) {
+                        showMessage('请求失败: ' + error.message, 'error');
                     }
                 };
 
@@ -338,21 +408,25 @@
 
                 onMounted(() => {
                     fetchData();
+                    fetchBtSites();
                 });
 
                 return {
                     routes,
+                    btSites,
                     settings,
                     newRoute,
+                    editingRoute,
                     message,
                     loading,
                     addRoute,
-                    deleteRoute,
                     openEditModal,
                     updateRoute,
-                    updateSettings,
+                    deleteRoute,
                     applyConfig,
-                    editingRoute
+                    updateSettings,
+                    fetchBtSites,
+                    autoAddBtSite
                 };
             }
         }).mount('#app');
