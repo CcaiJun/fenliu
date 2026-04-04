@@ -53,6 +53,11 @@ setup_firewall() {
     fi
 }
 
+generate_initial_config() {
+    echo -e "${YELLOW}正在生成初始 Nginx 配置...${PLAIN}"
+    python3 -c "import app; app.generate_nginx_config(app.load_data())" 2>/dev/null
+}
+
 setup_data_json() {
     DATA_FILE="data.json"
     if [[ ! -f "$DATA_FILE" ]]; then
@@ -63,6 +68,89 @@ setup_data_json() {
         data = json.load(open('$DATA_FILE')); \
         data['panel_port'] = $PANEL_PORT; \
         json.dump(data, open('$DATA_FILE', 'w'), indent=2)" 2>/dev/null
+}
+
+check_and_migrate_bt_sites() {
+    BT_VHOST_DIR="/www/server/panel/vhost/nginx"
+    if [[ ! -d "$BT_VHOST_DIR" ]]; then
+        return
+    fi
+
+    # 查找所有监听 443 端口的站点
+    SITES_443=$(grep -l "listen 443 ssl" "$BT_VHOST_DIR"/*.conf 2>/dev/null)
+    if [[ -z "$SITES_443" ]]; then
+        return
+    fi
+
+    echo -e "\n${YELLOW}检测到以下宝塔站点当前正在占用 443 端口：${PLAIN}"
+    for site_conf in $SITES_443; do
+        basename "$site_conf" .conf
+    done
+
+    echo -e "\n${YELLOW}为了防止 443 端口冲突，是否一键将这些站点迁移到本应用的分流转发？(y/n)${PLAIN}"
+    read -p "选择: " migrate_confirm < /dev/tty
+    if [[ "$migrate_confirm" != "y" && "$migrate_confirm" != "Y" ]]; then
+        echo -e "${YELLOW}已跳过自动迁移。请务必在安装后通过管理面板手动处理这些域名的端口冲突。${PLAIN}"
+        return
+    fi
+
+    echo -e "${YELLOW}正在自动迁移站点配置...${PLAIN}"
+    
+    python3 <<EOF
+import os, re, json, uuid
+
+BT_VHOST_DIR = "$BT_VHOST_DIR"
+DATA_FILE = "data.json"
+SITES_443 = "$SITES_443".split()
+
+def patch_conf(domain, port):
+    conf_path = os.path.join(BT_VHOST_DIR, f"{domain}.conf")
+    with open(conf_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+    content = re.sub(r'listen\s+443\s+ssl\s*;', f'listen {port} ssl;', content)
+    content = re.sub(r'if\s*\(\$server_port\s*!=\s*443\s*\)', f'if ($server_port != {port})', content)
+    content = re.sub(r'error_page\s+497\s+https://\$host\$request_uri;', f'error_page 497 https://\$host:{port}\$request_uri;', content)
+    with open(conf_path, 'w', encoding='utf-8') as f:
+        f.write(content)
+
+with open(DATA_FILE, 'r') as f:
+    data = json.load(f)
+
+start_port = 10001
+# 查找当前最大的后端端口
+for r in data.get('routes', []):
+    try:
+        p = int(r['backend_server'].split(':')[-1])
+        if p >= start_port: start_port = p + 1
+    except: pass
+
+for site_conf in SITES_443:
+    domain = os.path.basename(site_conf).replace('.conf', '')
+    if any(r['domain'] == domain for r in data['routes']):
+        print(f"  - {domain} 已在分流规则中，跳过")
+        continue
+    
+    port = start_port
+    start_port += 1
+    
+    try:
+        patch_conf(domain, port)
+        new_route = {
+            "id": str(uuid.uuid4())[:8],
+            "domain": domain,
+            "backend_name": re.sub(r'[^a-zA-Z0-9_]', '_', domain) + "_bt",
+            "backend_server": f"127.0.0.1:{port}"
+        }
+        data['routes'].append(new_route)
+        print(f"  - {domain} 成功迁移到端口 {port}")
+    except Exception as e:
+        print(f"  - {domain} 迁移失败: {str(e)}")
+
+with open(DATA_FILE, 'w') as f:
+    json.dump(data, f, indent=2)
+EOF
+
+    echo -e "${GREEN}自动迁移完成！${PLAIN}"
 }
 
 setup_service() {
@@ -188,8 +276,10 @@ if [[ -f "requirements.txt" ]]; then
     pip3 install -r requirements.txt --break-system-packages || pip3 install -r requirements.txt
 fi
 
-setup_nginx
 setup_data_json
+check_and_migrate_bt_sites
+setup_nginx
+generate_initial_config
 setup_service
 setup_firewall
 
