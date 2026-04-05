@@ -76,13 +76,22 @@
                     <h2 class="text-xl font-bold text-gray-800 mb-4 border-b pb-2">全局设置</h2>
                     <form @submit.prevent="updateSettings">
                         <div class="mb-4">
-                            <label class="block text-gray-700 text-sm font-bold mb-2">监听端口</label>
+                            <label class="block text-gray-700 text-sm font-bold mb-2">分流监听端口</label>
                             <input v-model="settings.listen_port" type="number" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" required>
                             <p class="text-xs text-gray-500 mt-1">通常为 443，请确保不与 Nginx 的 http 模块冲突</p>
                         </div>
-                        <button type="submit" class="w-full bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline">
+                        <div class="mb-4">
+                            <label class="block text-gray-700 text-sm font-bold mb-2">默认后端 (自适应端口)</label>
+                            <input v-model="settings.default_backend_server" type="text" placeholder="例如: 4433" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" required>
+                            <p class="text-xs text-gray-500 mt-1">未匹配域名的回源地址，建议设为 4433</p>
+                        </div>
+                        <button type="submit" class="w-full bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline mb-4">
                             保存设置
                         </button>
+                        <button @click.prevent="migrateAllBt" class="w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline text-sm">
+                            一键迁移所有站点到自适应端口
+                        </button>
+                        <p class="text-xs text-gray-400 mt-2 italic">此操作将所有非分流域名的宝塔配置 443 端口修改为上述默认后端端口。</p>
                     </form>
                 </div>
             </div>
@@ -176,13 +185,18 @@
                     <pre class="text-xs bg-gray-800 text-green-400 p-3 rounded overflow-x-auto"><code>stream {
     map $ssl_preread_server_name $backend_name {
 <span v-for="r in routes" :key="'map-'+r.id">        {{ r.domain }}    {{ r.backend_name }};
-</span>    }
+</span>        default          default_backend;
+    }
 
 <span v-for="r in routes" :key="'up-'+r.id">    upstream {{ r.backend_name }} {
         server {{ r.backend_server }};
     }
 
-</span>    server {
+</span>    upstream default_backend {
+        server {{ settings.default_backend_server }};
+    }
+
+    server {
         listen {{ settings.listen_port }} reuseport;
         proxy_pass $backend_name;
         ssl_preread on;
@@ -239,7 +253,7 @@
             setup() {
                 const routes = ref([]);
                 const btSites = ref([]);
-                const settings = ref({ listen_port: 443 });
+                const settings = ref({ listen_port: 443, default_backend_server: '127.0.0.1:4433' });
                 const newRoute = ref({ domain: '', backend_server: '', backend_name: '', auto_patch: true });
                 const editingRoute = ref(null);
                 const message = ref({ text: '', type: '' });
@@ -258,6 +272,7 @@
                         const data = await res.json();
                         routes.value = data.routes || [];
                         settings.value.listen_port = data.listen_port || 443;
+                        settings.value.default_backend_server = data.default_backend_server || '127.0.0.1:4433';
                     } catch (error) {
                         showMessage('获取数据失败: ' + error.message, 'error');
                     }
@@ -374,7 +389,10 @@
                         const res = await fetch('/api/settings', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ listen_port: settings.value.listen_port })
+                            body: JSON.stringify({ 
+                                listen_port: settings.value.listen_port,
+                                default_backend_server: settings.value.default_backend_server
+                            })
                         });
                         const data = await res.json();
                         
@@ -385,6 +403,27 @@
                         }
                     } catch (error) {
                         showMessage('请求失败: ' + error.message, 'error');
+                    }
+                };
+
+                const migrateAllBt = async () => {
+                    if (!confirm('确定要一键迁移所有正常站点到自适应端口吗？这会修改所有非分流域名的宝塔配置。')) return;
+                    
+                    loading.value = true;
+                    try {
+                        const res = await fetch('/api/migrate_all_bt', { method: 'POST' });
+                        const data = await res.json();
+                        
+                        if (res.ok) {
+                            const successCount = data.results.filter(r => r.success).length;
+                            showMessage(`迁移完成！成功: ${successCount}, 失败: ${data.results.length - successCount}`);
+                        } else {
+                            showMessage(data.error || '迁移失败', 'error');
+                        }
+                    } catch (error) {
+                        showMessage('请求失败: ' + error.message, 'error');
+                    } finally {
+                        loading.value = false;
                     }
                 };
 
@@ -425,6 +464,7 @@
                     deleteRoute,
                     applyConfig,
                     updateSettings,
+                    migrateAllBt,
                     fetchBtSites,
                     autoAddBtSite
                 };

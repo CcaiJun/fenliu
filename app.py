@@ -16,26 +16,42 @@ def patch_bt_site_config(domain, target_port):
     if not os.path.exists(conf_path):
         return False, f"未找到宝塔配置文件: {conf_path}"
     
+    # 备份原配置
+    backup_path = f"{conf_path}.bak"
     try:
+        import shutil
+        if not os.path.exists(backup_path):
+            shutil.copy2(conf_path, backup_path)
+            
         with open(conf_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         # 1. 修改 listen 443 ssl 为 target_port
-        # 注意宝塔可能有空格或分号，使用正则匹配更稳妥
+        # 增强正则，支持 IPv6 和更多格式
         new_content = re.sub(r'listen\s+443\s+ssl\s*;', f'listen {target_port} ssl;', content)
+        new_content = re.sub(r'listen\s+\[::\]:443\s+ssl\s*;', f'listen [::]:{target_port} ssl;', new_content)
         
         # 2. 修改 if ($server_port != 443) 为 target_port
         new_content = re.sub(r'if\s*\(\$server_port\s*!=\s*443\s*\)', f'if ($server_port != {target_port})', new_content)
         
         # 3. 修改 error_page 497 https://$host$request_uri; -> https://$host:target_port$request_uri;
-        # 宝塔默认配置在非 443 端口时需要带端口跳转
-        new_content = re.sub(r'error_page\s+497\s+https://\$host\$request_uri;', f'error_page 497 https://$host:{target_port}$request_uri;', new_content)
+        # 移除已存在的端口后再添加，防止重复叠加
+        new_content = re.sub(r'error_page\s+497\s+https://\$host(:\d+)?\$request_uri;', f'error_page 497 https://$host:{target_port}$request_uri;', new_content)
 
         if new_content == content:
-            return False, "配置文件内容未发生变化（可能已是目标端口或格式不匹配）"
+            # 即使没变也可能已经改过了，返回成功
+            return True, f"配置文件已是目标状态: {conf_path}"
 
         with open(conf_path, 'w', encoding='utf-8') as f:
             f.write(new_content)
+            
+        # 验证 Nginx 配置
+        test_result = subprocess.run(['nginx', '-t'], capture_output=True, text=True)
+        if test_result.returncode != 0:
+            # 还原备份
+            shutil.copy2(backup_path, conf_path)
+            return False, f"Nginx 配置测试失败，已还原: {test_result.stderr}"
+            
         return True, f"成功修改宝塔配置文件: {conf_path}"
     except Exception as e:
         return False, f"修改配置文件时出错: {str(e)}"
@@ -75,9 +91,12 @@ def index():
 
 def load_data():
     if not os.path.exists(DATA_FILE):
-        return {"listen_port": 443, "routes": []}
+        return {"listen_port": 443, "routes": [], "default_backend_server": "127.0.0.1:4433"}
     with open(DATA_FILE, 'r', encoding='utf-8') as f:
-        return json.load(f)
+        data = json.load(f)
+        if "default_backend_server" not in data:
+            data["default_backend_server"] = "127.0.0.1:4433"
+        return data
 
 def save_data(data):
     with open(DATA_FILE, 'w', encoding='utf-8') as f:
@@ -86,12 +105,14 @@ def save_data(data):
 def generate_nginx_config(data):
     routes = data.get("routes", [])
     listen_port = data.get("listen_port", 443)
+    default_backend_server = data.get("default_backend_server", "127.0.0.1:4433")
     
     config = []
     config.append("    # 由 SNI 管理面板自动生成")
     config.append("    map $ssl_preread_server_name $backend_name {")
     for r in routes:
         config.append(f"        {r['domain']}    {r['backend_name']};")
+    config.append(f"        default          default_backend;")
     config.append("    }")
     config.append("")
     
@@ -100,6 +121,11 @@ def generate_nginx_config(data):
         config.append(f"        server {r['backend_server']};")
         config.append("    }")
         config.append("")
+    
+    config.append(f"    upstream default_backend {{")
+    config.append(f"        server {default_backend_server};")
+    config.append("    }")
+    config.append("")
         
     config.append("    server {")
     config.append(f"        listen {listen_port} reuseport;")
@@ -229,15 +255,77 @@ def delete_route(route_id):
 def update_settings():
     req = request.json
     listen_port = req.get('listen_port')
+    default_backend_server = req.get('default_backend_server')
     
-    if not listen_port:
-        return jsonify({"error": "监听端口不能为空"}), 400
-        
     data = load_data()
-    data['listen_port'] = int(listen_port)
+    if listen_port:
+        data['listen_port'] = int(listen_port)
+    if default_backend_server:
+        # 补全 127.0.0.1:
+        if ':' not in str(default_backend_server):
+            default_backend_server = f"127.0.0.1:{default_backend_server}"
+        elif default_backend_server.startswith(':'):
+            default_backend_server = f"127.0.0.1{default_backend_server}"
+        data['default_backend_server'] = default_backend_server
+        
     save_data(data)
     generate_nginx_config(data)
     return jsonify({"message": "设置已更新"})
+
+@app.route('/api/migrate_all_bt', methods=['POST'])
+def migrate_all_bt():
+    """一键将所有未被分流规则占用的宝塔站点，其 443 端口修改为默认后端端口"""
+    data = load_data()
+    default_port = data.get("default_backend_server", "127.0.0.1:4433").split(':')[-1]
+    
+    if not os.path.exists(BT_VHOST_DIR):
+        return jsonify({"error": "未找到宝塔 Nginx 配置目录"}), 404
+    
+    results = []
+    routes_domains = [r['domain'] for r in data.get('routes', [])]
+    
+    for filename in os.listdir(BT_VHOST_DIR):
+        if filename.endswith(".conf"):
+            domain = filename[:-5]
+            if domain in routes_domains:
+                continue # 已在分流规则中，跳过
+                
+            success, msg = patch_bt_site_config(domain, default_port)
+            results.append({"domain": domain, "success": success, "message": msg})
+            
+    return jsonify({"message": "批量迁移完成", "results": results})
+
+@app.route('/api/restore_bt/<domain>', methods=['POST'])
+def restore_bt_site(domain):
+    """还原宝塔站点的 Nginx 配置文件端口"""
+    conf_path = os.path.join(BT_VHOST_DIR, f"{domain}.conf")
+    backup_path = f"{conf_path}.bak"
+    
+    if not os.path.exists(backup_path):
+        # 如果没有备份文件，尝试通过正则强制改回 443
+        try:
+            with open(conf_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            new_content = re.sub(r'listen\s+\d+\s+ssl\s*;', 'listen 443 ssl;', content)
+            new_content = re.sub(r'listen\s+\[::\]:\d+\s+ssl\s*;', 'listen [::]:443 ssl;', new_content)
+            new_content = re.sub(r'if\s*\(\$server_port\s*!=\s*\d+\s*\)', 'if ($server_port != 443)', new_content)
+            new_content = re.sub(r'error_page\s+497\s+https://\$host(:\d+)?\$request_uri;', 'error_page 497 https://$host$request_uri;', new_content)
+            
+            if new_content != content:
+                with open(conf_path, 'w', encoding='utf-8') as f:
+                    f.write(new_content)
+                return jsonify({"message": "成功强制还原宝塔配置到 443"})
+            return jsonify({"message": "配置似乎已经是 443 端口"})
+        except Exception as e:
+            return jsonify({"error": f"强制还原失败: {str(e)}"}), 500
+            
+    try:
+        import shutil
+        shutil.copy2(backup_path, conf_path)
+        return jsonify({"message": f"成功从备份还原: {domain}"})
+    except Exception as e:
+        return jsonify({"error": f"从备份还原失败: {str(e)}"}), 500
 
 @app.route('/api/apply', methods=['POST'])
 def apply_config():

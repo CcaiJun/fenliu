@@ -104,14 +104,28 @@ DATA_FILE = "data.json"
 SITES_443 = "$SITES_443".split()
 
 def patch_conf(domain, port):
+    import shutil, subprocess
     conf_path = os.path.join(BT_VHOST_DIR, f"{domain}.conf")
+    backup_path = f"{conf_path}.bak"
+    
+    if not os.path.exists(backup_path):
+        shutil.copy2(conf_path, backup_path)
+        
     with open(conf_path, 'r', encoding='utf-8') as f:
         content = f.read()
-    content = re.sub(r'listen\s+443\s+ssl\s*;', f'listen {port} ssl;', content)
-    content = re.sub(r'if\s*\(\$server_port\s*!=\s*443\s*\)', f'if ($server_port != {port})', content)
-    content = re.sub(r'error_page\s+497\s+https://\$host\$request_uri;', f'error_page 497 https://\$host:{port}\$request_uri;', content)
+        
+    new_content = re.sub(r'listen\s+443\s+ssl\s*;', f'listen {port} ssl;', content)
+    new_content = re.sub(r'listen\s+\[::\]:443\s+ssl\s*;', f'listen [::]:{port} ssl;', new_content)
+    new_content = re.sub(r'if\s*\(\$server_port\s*!=\s*443\s*\)', f'if ($server_port != {port})', new_content)
+    new_content = re.sub(r'error_page\s+497\s+https://\$host(:\d+)?\$request_uri;', f'error_page 497 https://\$host:{port}\$request_uri;', new_content)
+    
     with open(conf_path, 'w', encoding='utf-8') as f:
-        f.write(content)
+        f.write(new_content)
+        
+    test_result = subprocess.run(['nginx', '-t'], capture_output=True, text=True)
+    if test_result.returncode != 0:
+        shutil.copy2(backup_path, conf_path)
+        raise Exception(f"Nginx 测试失败，已还原。原因: {test_result.stderr.strip()}")
 
 with open(DATA_FILE, 'r') as f:
     data = json.load(f)
@@ -191,47 +205,83 @@ setup_nginx() {
     
     # 自动识别 Nginx 配置路径
     NGINX_CONF=""
-    STREAM_CONF=""
-    
-    # 优先检查常见路径
     if [[ -f "/www/server/nginx/conf/nginx.conf" ]]; then
         NGINX_CONF="/www/server/nginx/conf/nginx.conf"
     elif [[ -f "/etc/nginx/nginx.conf" ]]; then
         NGINX_CONF="/etc/nginx/nginx.conf"
-    elif [[ -f "/usr/local/nginx/conf/nginx.conf" ]]; then
-        NGINX_CONF="/usr/local/nginx/conf/nginx.conf"
-    else
-        # 尝试通过 nginx -V 查找
-        NGINX_CONF=$(nginx -V 2>&1 | grep -oP "conf-path=\K[^ ]*")
-        if [[ ! -f "$NGINX_CONF" ]]; then
-            # 最后的尝试：find
-            NGINX_CONF=$(find /etc /usr/local /www -name "nginx.conf" 2>/dev/null | head -n 1)
-        fi
     fi
 
     if [[ -n "$NGINX_CONF" ]]; then
-        # 规则文件放在 nginx.conf 同级目录
         CONF_DIR=$(dirname "$NGINX_CONF")
         STREAM_CONF="$CONF_DIR/stream-sni.conf"
         
-        # 检查是否已经 include
-        if ! grep -q "stream-sni.conf" "$NGINX_CONF"; then
-            # 尝试插入到 stream 块中
-            if grep -q "stream {" "$NGINX_CONF"; then
-                sed -i '/stream {/a \    include '"$STREAM_CONF"';' "$NGINX_CONF"
-            else
-                # 如果没有 stream 块，添加到文件末尾
-                echo -e "\nstream {\n    include $STREAM_CONF;\n}" >> "$NGINX_CONF"
-            fi
-            echo -e "${GREEN}Nginx 配置已自动关联：$NGINX_CONF${PLAIN}"
+        python3 <<EOF
+import re, os, shutil, subprocess, sys
+
+nginx_conf = "$NGINX_CONF"
+stream_conf = "$STREAM_CONF"
+backup_conf = nginx_conf + ".bak"
+
+if not os.path.exists(backup_conf):
+    shutil.copy2(nginx_conf, backup_conf)
+
+with open(nginx_conf, 'r') as f:
+    content = f.read()
+
+# 1. 移除已有的相关 include (防止重复)
+content = re.sub(r'include\s+.*stream-sni\.conf\s*;', '', content)
+
+# 2. 构造新的 stream 块
+new_stream_block = f"""
+stream {{
+    include {stream_conf};
+}}
+"""
+
+# 3. 寻找插入位置
+# 如果已经有 stream { 块，则在其中插入 include
+if 'stream {' in content:
+    # 寻找 stream { 的起始位置
+    # 简单处理：在第一个 stream { 后插入
+    content = content.replace('stream {', 'stream {\n    include ' + stream_conf + ';')
+else:
+    # 如果没有 stream 块，则在 events 块之后插入
+    if 'events {' in content:
+        # 寻找 events { ... }
+        match = re.search(r'events\s*\{.*?\}', content, re.DOTALL)
+        if match:
+            end_pos = match.end()
+            content = content[:end_pos] + "\n" + new_stream_block + content[end_pos:]
+        else:
+            content += "\n" + new_stream_block
+    else:
+        # 都没有，直接加在末尾
+        content += "\n" + new_stream_block
+
+with open(nginx_conf, 'w') as f:
+    f.write(content)
+
+# 为了测试配置，我们需要确保 stream-sni.conf 存在且合法
+if not os.path.exists(stream_conf):
+    with open(stream_conf, 'w') as f:
+        f.write("# 初始化空的 stream 规则\n")
+
+test_result = subprocess.run(['nginx', '-t'], capture_output=True, text=True)
+if test_result.returncode != 0:
+    shutil.copy2(backup_conf, nginx_conf)
+    print(f"Error: Nginx 关联测试失败，已自动还原主配置。错误信息:\n{test_result.stderr}")
+    sys.exit(1)
+EOF
+        if [ $? -eq 0 ]; then
+            echo -e "${GREEN}Nginx 配置已自动关联并验证通过：$NGINX_CONF${PLAIN}"
         else
-            echo -e "${YELLOW}Nginx 配置已存在关联，跳过${PLAIN}"
+            echo -e "${RED}警告：Nginx 配置自动关联失败，请手动在 nginx.conf 中添加 include${PLAIN}"
         fi
-        touch "$STREAM_CONF"
     else
         echo -e "${RED}警告：未找到 Nginx 配置文件，请手动在 nginx.conf 中添加 include${PLAIN}"
     fi
 }
+
 
 echo -e "${GREEN}开始安装 Nginx SNI 分流管理面板...${PLAIN}"
 
