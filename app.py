@@ -31,12 +31,13 @@ def patch_bt_site_config(domain, target_port):
         new_content = re.sub(r'listen\s+443\s+ssl\s*;', f'listen {target_port} ssl;', content)
         new_content = re.sub(r'listen\s+\[::\]:443\s+ssl\s*;', f'listen [::]:{target_port} ssl;', new_content)
         
-        # 2. 修改 if ($server_port != 443) 为 target_port
-        new_content = re.sub(r'if\s*\(\$server_port\s*!=\s*443\s*\)', f'if ($server_port != {target_port})', new_content)
+        # 2. 修改 HTTP 跳转 HTTPS 的判断条件，防止在 SNI 代理下产生重定向死循环
+        # 将 if ($server_port != 443) 或 if ($server_port !~ 443) 修改为 if ($server_port = 80)
+        new_content = re.sub(r'if\s*\(\$server_port\s*!=\s*443\s*\)', 'if ($server_port = 80)', new_content)
+        new_content = re.sub(r'if\s*\(\$server_port\s*!~\s*443\s*\)', 'if ($server_port = 80)', new_content)
         
-        # 3. 修改 error_page 497 https://$host$request_uri; -> https://$host:target_port$request_uri;
-        # 移除已存在的端口后再添加，防止重复叠加
-        new_content = re.sub(r'error_page\s+497\s+https://\$host(:\d+)?\$request_uri;', f'error_page 497 https://$host:{target_port}$request_uri;', new_content)
+        # 3. 修复 error_page 497 跳转，不再附加内部端口，防止端口泄露
+        new_content = re.sub(r'error_page\s+497\s+https://\$host(:\d+)?\$request_uri;', 'error_page 497 https://$host$request_uri;', new_content)
 
         if new_content == content:
             # 即使没变也可能已经改过了，返回成功

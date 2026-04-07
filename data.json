@@ -1,0 +1,25 @@
+{
+  "listen_port": 443,
+  "routes": [
+    {
+      "id": "7b26d85b",
+      "domain": "2am100.funa.cc",
+      "backend_name": "sui",
+      "backend_server": "127.0.0.1:54726"
+    },
+    {
+      "id": "5c341108",
+      "domain": "www.apple.com",
+      "backend_name": "www_apple_com_backend",
+      "backend_server": "127.0.0.1:44322"
+    },
+    {
+      "id": "b7e671ae",
+      "domain": "ckmg.funa.cc",
+      "backend_name": "ckmg_funa_cc_bt",
+      "backend_server": "127.0.0.1:10001"
+    }
+  ],
+  "panel_port": 5000,
+  "default_backend_server": "127.0.0.1:4433"
+}
